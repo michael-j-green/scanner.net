@@ -1,0 +1,3 @@
+[console_scripts]
+brscand = brscan.brscand:main
+
