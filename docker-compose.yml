@@ -1,123 +1,30 @@
-# docker-compose file for running paperless from the Docker Hub.
-# This file contains everything paperless needs to run.
-# Paperless supports amd64, arm and arm64 hardware.
-#
-# All compose files of paperless configure paperless in the following way:
-#
-# - Paperless is (re)started on system boot, if it was running before shutdown.
-# - Docker volumes for storing data are managed by Docker.
-# - Folders for importing and exporting files are created in the same directory
-#   as this file and mounted to the correct folders inside the container.
-# - Paperless listens on port 8000.
-#
-# In addition to that, this docker-compose file adds the following optional
-# configurations:
-#
-# - Instead of SQLite (default), PostgreSQL is used as the database server.
-# - Apache Tika and Gotenberg servers are started with paperless and paperless
-#   is configured to use these services. These provide support for consuming
-#   Office documents (Word, Excel, Power Point and their LibreOffice counter-
-#   parts.
-#
-# To install and update paperless with this file, do the following:
-#
-# - Copy this file as 'docker-compose.yml' and the files 'docker-compose.env'
-#   and '.env' into a folder.
-# - Run 'docker-compose pull'.
-# - Run 'docker-compose run --rm webserver createsuperuser' to create a user.
-# - Run 'docker-compose up -d'.
-#
-# For more extensive installation and update instructions, refer to the
-# documentation.
-
-version: "3.4"
 services:
-  broker:
-    image: redis:8
+  scanner-net:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: scanner-net:latest
+    container_name: scanner-net
     restart: unless-stopped
-    networks:
-      - paperless
-
-  db:
-    image: postgres:17
-    restart: unless-stopped
-    volumes:
-      - /mnt/docker/paperless/pgdata:/var/lib/postgresql/data
-    environment:
-      POSTGRES_DB: paperless
-      POSTGRES_USER: paperless
-      POSTGRES_PASSWORD: paperless
-    networks:
-      - paperless
-
-  webserver:
-    image: ghcr.io/paperless-ngx/paperless-ngx:latest
-    restart: unless-stopped
-    depends_on:
-      - db
-      - broker
-      - gotenberg
-      - tika
+    privileged: true
     ports:
-      - 8000:8000
-    networks:
-      - paperless
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      - "54925:54925/udp"
+    environment:
+      SCANNER_IP: "10.0.0.9"
+      ADVERTISE_IP: "10.0.0.200"
+      BIND_IP: "0.0.0.0"
+      BIND_PORT: "54925"
+      CONFIG_INTERVAL_SECONDS: "600"
+      OUTPUT_DIR: "/output/scan"
+      TEMP_DIR: "/tmp/scan"
+      FLATBED_RESOLUTION: "300"
+      ADF_RESOLUTION: "300"
     volumes:
-      - /mnt/docker/paperless/data:/usr/src/paperless/data
-      - /mnt/docker/paperless/media:/usr/src/paperless/media
-      - /mnt/docker/paperless/export:/usr/src/paperless/export
-      - /mnt/docker/paperless/consume:/usr/src/paperless/consume
-      - /mnt/docker/paperless/trash:/usr/src/paperless/trash
-    env_file: docker-compose.env
-    environment:
-      PAPERLESS_REDIS: redis://broker:6379
-      PAPERLESS_DBHOST: db
-      PAPERLESS_TIKA_ENABLED: 1
-      PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://gotenberg:3000
-      PAPERLESS_TIKA_ENDPOINT: http://tika:9998
-      PAPERLESS_TRASH_DIR: /usr/src/paperless/trash
-      PAPERLESS_ENABLE_UPDATE_CHECK: 0
-      PAPERLESS_APPS: allauth.socialaccount.providers.openid_connect
-      PAPERLESS_SOCIALACCOUNT_PROVIDERS: '
-{"openid_connect": {"APPS": [{"provider_id": "Azure","name": "Azure","client_id": "cb8c045f-29cf-49e9-a6f0-6a5554f422df","secret": "nW_8Q~hmYhjJE9nfxqja6tPHtqdbY6Vf2m3YGcq1","settings": { "server_url": "https://login.microsoftonline.com/cc5413eb-b611-4bf0-bb41-be84e12a3c1f/v2.0/.well-known/openid-configuration"}}]}}'
-      PAPERLESS_DISABLE_REGULAR_LOGIN: 1
-
-  gotenberg:
-    image: thecodingmachine/gotenberg
-    restart: unless-stopped
-    environment:
-      DISABLE_GOOGLE_CHROME: 1
-    networks:
-      - paperless
-
-  tika:
-    image: apache/tika
-    restart: unless-stopped
-    networks:
-      - paperless
-
-#  scanner:
-#    build:
-#      context: ./scanner
-#    restart: unless-stopped
-#    network_mode: host
-#    privileged: true
-#    volumes:
-#      - /mnt/docker/paperless/consume:/output/scan
-#      - ./scanner/brother-scan.yaml:/brother-scan.yaml
-#    environment:
-#      SCANNER_NAME: "M225dw"
-#      SCANNER_MODEL: "DCP-L2540DW"
-#      SCANNER_IP: "10.0.0.9"
-#      ADVERTISE_IP: "10.0.0.32"
-
-networks:
-  paperless:
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: br_paperless
+      - ./output:/output/scan
+      - ./appsettings.json:/app/appsettings.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pidof scanner-net >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
