@@ -21,7 +21,7 @@ services:
       ADF_RESOLUTION: "300"
     volumes:
       - ./output:/output/scan
-      - ./appsettings.json:/app/appsettings.json:ro
+      - ./src/scanner.net/appsettings.json:/app/appsettings.json:ro
     healthcheck:
       test: ["CMD-SHELL", "pidof scanner-net >/dev/null || exit 1"]
       interval: 30s

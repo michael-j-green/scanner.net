@@ -10,19 +10,26 @@ RUN git clone --recurse-submodules https://github.com/rumpeltux/brother-scand.gi
 FROM mcr.microsoft.com/dotnet/sdk:10.0-preview AS build
 WORKDIR /src
 ARG TARGETARCH
+ARG APP_VERSION=0.0.0-dev
+ARG APP_VERSION_RAW=v0.0.0-dev
 
-COPY scanner.net.csproj ./
-RUN dotnet restore
+COPY src/scanner.net/scanner.net.csproj src/scanner.net/
+RUN dotnet restore src/scanner.net/scanner.net.csproj
 
-COPY . ./
+COPY src/scanner.net/ src/scanner.net/
 RUN case "$TARGETARCH" in \
     "arm64") RID="linux-arm64" ;; \
     "amd64") RID="linux-x64" ;; \
     *) echo "Unsupported TARGETARCH: $TARGETARCH"; exit 1 ;; \
     esac \
-    && dotnet publish -c Release -r "$RID" --self-contained true \
+    && FILE_VERSION="$(echo "$APP_VERSION" | sed -E 's/^([0-9]+)\.([0-9]+)\.([0-9]+).*/\1.\2.\3.0/')" \
+    && dotnet publish src/scanner.net/scanner.net.csproj -c Release -r "$RID" --self-contained true \
     /p:PublishSingleFile=true \
     /p:PublishTrimmed=false \
+    /p:Version="$APP_VERSION" \
+    /p:InformationalVersion="$APP_VERSION_RAW" \
+    /p:AssemblyVersion="$FILE_VERSION" \
+    /p:FileVersion="$FILE_VERSION" \
     -o /app/out
 
 FROM debian:bookworm-slim
@@ -36,7 +43,7 @@ RUN apt-get update -q \
 
 COPY --from=build /app/out/scanner-net /app/scanner-net
 COPY --from=brother-build /src/build/brother-scan-cli /app/brother-scan-cli
-COPY appsettings.json /app/appsettings.json
+COPY src/scanner.net/appsettings.json /app/appsettings.json
 COPY entrypoint.sh /app/entrypoint.sh
 COPY scan-hook.sh /app/scan-hook.sh
 RUN chmod +x /app/scanner-net /app/brother-scan-cli /app/entrypoint.sh /app/scan-hook.sh

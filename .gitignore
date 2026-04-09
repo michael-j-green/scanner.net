@@ -1,5 +1,5 @@
-bin/
-obj/
+**/bin/
+**/obj/
 .vs/
 .vscode/
 *.user
@@ -9,3 +9,4 @@ obj/
 .DS_Store
 output/
 test-output/
+.idea/

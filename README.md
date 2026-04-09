@@ -4,6 +4,13 @@ A small .NET 10 service for Brother network scan buttons.
 
 It advertises scanner menu entries over SNMP, listens for button presses over UDP, pulls pages with `brother-scan-cli`, converts images to PDF, and writes one final PDF per scan.
 
+## Repository Layout
+
+- `scanner.net.slnx` - solution file
+- `src/scanner.net` - application source (`.csproj`, services, models, config)
+- `Dockerfile` - multi-stage image build
+- `.github/workflows` - PR validation and release automation
+
 ## How It Works
 
 1. `SnmpAdvertiseService` sends periodic Brother scan-menu advertisements to the printer.
@@ -80,3 +87,13 @@ docker run -d --name scanner-net-live --rm \
 ### Docker Compose
 
 Use the included `docker-compose.yml` as a production-style baseline.
+
+## Releases and Versioning
+
+- Pull requests run `.github/workflows/validate-pr.yml`, which builds the solution, checks `docker-compose.yml`, and builds the container for `linux/amd64` and `linux/arm64`.
+- Mark the `Validate PR / validate` check as required in GitHub branch protection if you want builds enforced before merge.
+- GitHub Releases (including pre-releases) publish a container image to GHCR.
+- Release names must be version tags like `v1.0.0` or `v1.0.0.a`.
+- The workflow embeds version metadata into the published executable via `Version` and `InformationalVersion`.
+- Published container platforms: `linux/amd64`, `linux/arm64`.
+- `linux/arm/v7` and `linux/386` are not published because the current .NET 10 preview SDK/runtime stack does not build cleanly for those targets in this image.
