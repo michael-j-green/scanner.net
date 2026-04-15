@@ -74,10 +74,8 @@ public sealed class ScanWorkerService : BackgroundService
 
         _logger.LogInformation("Starting brother-scan-cli for {ScannerIp}", _options.ScannerIp);
 
-        var scanResult = await RunProcessAsync("/app/brother-scan-cli", new[] { "-d", "-c", configPath }, cancellationToken,
+        var scanResult = await RunProcessAsync("/app/brother-scan-cli", new[] { "-c", configPath }, cancellationToken,
             workingDirectory: tempDir);
-
-        LogProcessOutput("brother-scan-cli", scanResult);
 
         var pageFiles = Directory
             .GetFiles(tempDir, "scan*.*")
@@ -89,6 +87,7 @@ public sealed class ScanWorkerService : BackgroundService
         if (pageFiles.Count == 0)
         {
             var tempEntries = Directory.GetFiles(tempDir).Select(Path.GetFileName).OrderBy(x => x).ToArray();
+            LogProcessOutput("brother-scan-cli", scanResult);
             _logger.LogWarning(
                 "No page files found in {TempDir} after scan. Temp contents: {TempEntries}",
                 tempDir,
