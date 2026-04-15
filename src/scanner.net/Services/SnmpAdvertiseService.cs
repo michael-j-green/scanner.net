@@ -43,7 +43,7 @@ public sealed class SnmpAdvertiseService : BackgroundService
                 foreach (var user in users.Keys)
                 {
                     var cmd =
-                        $"TYPE=BR;BUTTON=SCAN;USER=\"{user}\";FUNC={func.ToUpperInvariant()};HOST={advertiseAddress};APPNUM={appNum};DURATION={Math.Max(60, _options.AdvertiseIntervalSeconds)};BRID=;";
+                        $"TYPE=BR;BUTTON=SCAN;USER=\"{user}\";FUNC={func.ToUpperInvariant()};HOST={advertiseAddress};APPNUM={appNum};DURATION={Math.Max(60, _options.AdvertiseIntervalSeconds)};BRID=;CC=1;";
 
                     var variables = new List<Variable>
                     {

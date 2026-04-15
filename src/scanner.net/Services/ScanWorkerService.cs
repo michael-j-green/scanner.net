@@ -15,6 +15,8 @@ public sealed class ScanWorkerService : BackgroundService
     private readonly IScanQueue _queue;
     private readonly ILogger<ScanWorkerService> _logger;
 
+    private sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError);
+
     public ScanWorkerService(IOptions<ScannerOptions> options, IScanQueue queue, ILogger<ScanWorkerService> logger)
     {
         _options = options.Value;
@@ -72,8 +74,10 @@ public sealed class ScanWorkerService : BackgroundService
 
         _logger.LogInformation("Starting brother-scan-cli for {ScannerIp}", _options.ScannerIp);
 
-        await RunProcessAsync("/app/brother-scan-cli", new[] { "-c", configPath }, cancellationToken,
+        var scanResult = await RunProcessAsync("/app/brother-scan-cli", new[] { "-d", "-c", configPath }, cancellationToken,
             workingDirectory: tempDir);
+
+        LogProcessOutput("brother-scan-cli", scanResult);
 
         var pageFiles = Directory
             .GetFiles(tempDir, "scan*.*")
@@ -84,7 +88,11 @@ public sealed class ScanWorkerService : BackgroundService
 
         if (pageFiles.Count == 0)
         {
-            _logger.LogWarning("No page files found in {TempDir} after scan", tempDir);
+            var tempEntries = Directory.GetFiles(tempDir).Select(Path.GetFileName).OrderBy(x => x).ToArray();
+            _logger.LogWarning(
+                "No page files found in {TempDir} after scan. Temp contents: {TempEntries}",
+                tempDir,
+                tempEntries.Length == 0 ? "<empty>" : string.Join(", ", tempEntries));
             return;
         }
 
@@ -113,7 +121,7 @@ public sealed class ScanWorkerService : BackgroundService
             if (File.Exists(oddFile) && File.Exists(evenFile))
             {
                 var outFile = Path.Combine(dstDir, $"{now}.pdf");
-                await RunProcessAsync("pdftk", new[]
+                _ = await RunProcessAsync("pdftk", new[]
                 {
                     $"A={oddFile}", $"B={evenFile}",
                     "shuffle", "A", "Bend-1", "output", outFile,
@@ -212,7 +220,20 @@ public sealed class ScanWorkerService : BackgroundService
         return Task.CompletedTask;
     }
 
-    private static async Task RunProcessAsync(
+    private void LogProcessOutput(string fileName, ProcessResult result)
+    {
+        if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+        {
+            _logger.LogInformation("{FileName} stdout:{NewLine}{Output}", fileName, Environment.NewLine, result.StandardOutput.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.StandardError))
+        {
+            _logger.LogWarning("{FileName} stderr:{NewLine}{Output}", fileName, Environment.NewLine, result.StandardError.Trim());
+        }
+    }
+
+    private static async Task<ProcessResult> RunProcessAsync(
         string fileName,
         IEnumerable<string> arguments,
         CancellationToken cancellationToken,
@@ -238,9 +259,13 @@ public sealed class ScanWorkerService : BackgroundService
         var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
 
         await Task.WhenAll(stdoutTask, stderrTask, process.WaitForExitAsync(cancellationToken));
+        var result = new ProcessResult(process.ExitCode, stdoutTask.Result, stderrTask.Result);
+
         if (process.ExitCode != 0 && allowedExtraCodes?.Contains(process.ExitCode) != true)
         {
-            throw new InvalidOperationException($"{fileName} failed with code {process.ExitCode}: {stderrTask.Result}");
+            throw new InvalidOperationException($"{fileName} failed with code {process.ExitCode}: {result.StandardError}");
         }
+
+        return result;
     }
 }
