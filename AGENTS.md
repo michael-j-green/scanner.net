@@ -29,6 +29,7 @@ Run before pushing:
 ## Release Policy
 
 - Pull requests are validated by `.github/workflows/validate-pr.yml`.
+- PR validation includes a container startup smoke test on amd64.
 - Configure the `Validate PR / validate` status check as required in GitHub branch protection to block merges on failed builds.
 - Use GitHub Releases to publish images.
 - Release name/tag must be:
