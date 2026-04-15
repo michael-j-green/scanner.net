@@ -26,6 +26,7 @@ ADF and flatbed both produce a single output PDF named:
 - `brother-scan-cli` (compiled from `rumpeltux/brother-scand`)
 - `PdfSharpCore` (NuGet) for image -> PDF conversion and PDF merge
 - `pdftk` for duplex odd/even shuffle mode
+- `libicu72` for .NET globalization support
 
 ## Configuration
 
@@ -90,7 +91,7 @@ Use the included `docker-compose.yml` as a production-style baseline.
 
 ## Releases and Versioning
 
-- Pull requests run `.github/workflows/validate-pr.yml`, which builds the solution, checks `docker-compose.yml`, and builds the container for `linux/amd64` and `linux/arm64`.
+- Pull requests run `.github/workflows/validate-pr.yml`, which builds the solution, checks `docker-compose.yml`, runs an amd64 container startup smoke test, and builds the container for `linux/amd64` and `linux/arm64`.
 - Mark the `Validate PR / validate` check as required in GitHub branch protection if you want builds enforced before merge.
 - GitHub Releases (including pre-releases) publish a container image to GHCR.
 - Release names must be version tags like `v1.0.0` or `v1.0.0.a`.
