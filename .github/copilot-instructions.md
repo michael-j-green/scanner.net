@@ -45,4 +45,5 @@ Release name/tag format:
 
 CI converts pre-release format to semver-compatible build metadata for dotnet and container tags.
 Pull requests are validated by .github/workflows/validate-pr.yml before merge when that check is required in branch protection.
+PR validation includes an amd64 container startup smoke test.
 Release workflow publishes multi-arch images: linux/amd64, linux/arm64.
