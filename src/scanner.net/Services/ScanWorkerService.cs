@@ -104,7 +104,7 @@ public sealed class ScanWorkerService : BackgroundService
         var pdfFiles = new List<string>(pageFiles.Count);
         foreach (var pageFile in pageFiles)
         {
-            TrimTrailingGrayBlock(pageFile);
+            TrimTrailingGrayBlock(pageFile, profile, resolution);
             var pdfFile = Path.ChangeExtension(pageFile, ".pdf");
             await ConvertToPdfAsync(pageFile, pdfFile, cancellationToken);
             pdfFiles.Add(pdfFile);
@@ -182,7 +182,7 @@ public sealed class ScanWorkerService : BackgroundService
         return (i < name.Length && int.TryParse(name[i..], out var n)) ? n : 0;
     }
 
-    private void TrimTrailingGrayBlock(string inputFile)
+    private void TrimTrailingGrayBlock(string inputFile, ScanProfile profile, int resolution)
     {
         var extension = Path.GetExtension(inputFile);
         if (!string.Equals(extension, ".jpg", StringComparison.OrdinalIgnoreCase)
@@ -194,7 +194,8 @@ public sealed class ScanWorkerService : BackgroundService
         }
 
         using var image = Image.Load<Rgba32>(inputFile);
-        var trimmedHeight = FindTrimmedHeight(image);
+        var originalHeight = image.Height;
+        var trimmedHeight = FindTrimmedHeight(image, profile, resolution);
         if (trimmedHeight >= image.Height)
         {
             return;
@@ -205,17 +206,27 @@ public sealed class ScanWorkerService : BackgroundService
         _logger.LogInformation(
             "Trimmed trailing gray rows from {FileName}: {OriginalHeight} -> {TrimmedHeight}",
             Path.GetFileName(inputFile),
-            image.Height,
+            originalHeight,
             trimmedHeight);
     }
 
-    private static int FindTrimmedHeight(Image<Rgba32> image)
+    private static int FindTrimmedHeight(Image<Rgba32> image, ScanProfile profile, int resolution)
     {
         const int minTrimRows = 24;
         const int maxChannelSpread = 18;
         const int maxLumaSpread = 12;
         const int minGrayLuma = 40;
         const int maxGrayLuma = 235;
+        const int pageHeightTolerance = 12;
+
+        if (profile.Height is > 0)
+        {
+            var expectedHeight = MillimetersToPixels(profile.Height.Value, resolution);
+            if (image.Height > expectedHeight + pageHeightTolerance)
+            {
+                return expectedHeight;
+            }
+        }
 
         var sampleStep = Math.Max(1, image.Width / 256);
         var trailingGrayRows = 0;
@@ -263,6 +274,11 @@ public sealed class ScanWorkerService : BackgroundService
         }
 
         return Math.Max(1, image.Height - trailingGrayRows);
+    }
+
+    private static int MillimetersToPixels(int millimeters, int resolution)
+    {
+        return (int)Math.Round(millimeters / 25.4 * resolution, MidpointRounding.AwayFromZero);
     }
 
     private static Task ConvertToPdfAsync(
