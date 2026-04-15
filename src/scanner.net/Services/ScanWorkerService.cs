@@ -6,6 +6,9 @@ using PdfSharpCore.Drawing;
 using PdfSharpCore.Pdf;
 using PdfSharpCore.Pdf.IO;
 using ScannerNet.Models;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 
 namespace ScannerNet.Services;
 
@@ -14,6 +17,8 @@ public sealed class ScanWorkerService : BackgroundService
     private readonly ScannerOptions _options;
     private readonly IScanQueue _queue;
     private readonly ILogger<ScanWorkerService> _logger;
+
+    private sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError);
 
     public ScanWorkerService(IOptions<ScannerOptions> options, IScanQueue queue, ILogger<ScanWorkerService> logger)
     {
@@ -72,7 +77,7 @@ public sealed class ScanWorkerService : BackgroundService
 
         _logger.LogInformation("Starting brother-scan-cli for {ScannerIp}", _options.ScannerIp);
 
-        await RunProcessAsync("/app/brother-scan-cli", new[] { "-c", configPath }, cancellationToken,
+        var scanResult = await RunProcessAsync("/app/brother-scan-cli", new[] { "-c", configPath }, cancellationToken,
             workingDirectory: tempDir);
 
         var pageFiles = Directory
@@ -84,7 +89,12 @@ public sealed class ScanWorkerService : BackgroundService
 
         if (pageFiles.Count == 0)
         {
-            _logger.LogWarning("No page files found in {TempDir} after scan", tempDir);
+            var tempEntries = Directory.GetFiles(tempDir).Select(Path.GetFileName).OrderBy(x => x).ToArray();
+            LogProcessOutput("brother-scan-cli", scanResult);
+            _logger.LogWarning(
+                "No page files found in {TempDir} after scan. Temp contents: {TempEntries}",
+                tempDir,
+                tempEntries.Length == 0 ? "<empty>" : string.Join(", ", tempEntries));
             return;
         }
 
@@ -94,6 +104,7 @@ public sealed class ScanWorkerService : BackgroundService
         var pdfFiles = new List<string>(pageFiles.Count);
         foreach (var pageFile in pageFiles)
         {
+            TrimTrailingGrayBlock(pageFile, profile, resolution);
             var pdfFile = Path.ChangeExtension(pageFile, ".pdf");
             await ConvertToPdfAsync(pageFile, pdfFile, cancellationToken);
             pdfFiles.Add(pdfFile);
@@ -113,7 +124,7 @@ public sealed class ScanWorkerService : BackgroundService
             if (File.Exists(oddFile) && File.Exists(evenFile))
             {
                 var outFile = Path.Combine(dstDir, $"{now}.pdf");
-                await RunProcessAsync("pdftk", new[]
+                _ = await RunProcessAsync("pdftk", new[]
                 {
                     $"A={oddFile}", $"B={evenFile}",
                     "shuffle", "A", "Bend-1", "output", outFile,
@@ -171,6 +182,105 @@ public sealed class ScanWorkerService : BackgroundService
         return (i < name.Length && int.TryParse(name[i..], out var n)) ? n : 0;
     }
 
+    private void TrimTrailingGrayBlock(string inputFile, ScanProfile profile, int resolution)
+    {
+        var extension = Path.GetExtension(inputFile);
+        if (!string.Equals(extension, ".jpg", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(extension, ".jpeg", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(extension, ".bmp", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        using var image = Image.Load<Rgba32>(inputFile);
+        var originalHeight = image.Height;
+        var trimmedHeight = FindTrimmedHeight(image, profile, resolution);
+        if (trimmedHeight >= image.Height)
+        {
+            return;
+        }
+
+        image.Mutate(context => context.Crop(new Rectangle(0, 0, image.Width, trimmedHeight)));
+        image.Save(inputFile);
+        _logger.LogInformation(
+            "Trimmed trailing gray rows from {FileName}: {OriginalHeight} -> {TrimmedHeight}",
+            Path.GetFileName(inputFile),
+            originalHeight,
+            trimmedHeight);
+    }
+
+    private static int FindTrimmedHeight(Image<Rgba32> image, ScanProfile profile, int resolution)
+    {
+        const int minTrimRows = 24;
+        const int maxChannelSpread = 18;
+        const int maxLumaSpread = 12;
+        const int minGrayLuma = 40;
+        const int maxGrayLuma = 235;
+        const int pageHeightTolerance = 12;
+
+        if (profile.Height is > 0)
+        {
+            var expectedHeight = MillimetersToPixels(profile.Height.Value, resolution);
+            if (image.Height > expectedHeight + pageHeightTolerance)
+            {
+                return expectedHeight;
+            }
+        }
+
+        var sampleStep = Math.Max(1, image.Width / 256);
+        var trailingGrayRows = 0;
+
+        for (var y = image.Height - 1; y >= 0; y--)
+        {
+            var minLuma = 255;
+            var maxLuma = 0;
+            var minChannel = 255;
+            var maxChannel = 0;
+            long totalLuma = 0;
+            var samples = 0;
+
+            for (var x = 0; x < image.Width; x += sampleStep)
+            {
+                var pixel = image[x, y];
+                var luma = (pixel.R * 299 + pixel.G * 587 + pixel.B * 114) / 1000;
+                totalLuma += luma;
+                samples++;
+
+                minLuma = Math.Min(minLuma, luma);
+                maxLuma = Math.Max(maxLuma, luma);
+
+                minChannel = Math.Min(minChannel, Math.Min(pixel.R, Math.Min(pixel.G, pixel.B)));
+                maxChannel = Math.Max(maxChannel, Math.Max(pixel.R, Math.Max(pixel.G, pixel.B)));
+            }
+
+            var averageLuma = (int)(totalLuma / Math.Max(1, samples));
+            var looksUniformGray = averageLuma >= minGrayLuma
+                && averageLuma <= maxGrayLuma
+                && (maxLuma - minLuma) <= maxLumaSpread
+                && (maxChannel - minChannel) <= maxChannelSpread;
+
+            if (!looksUniformGray)
+            {
+                break;
+            }
+
+            trailingGrayRows++;
+        }
+
+        if (trailingGrayRows < minTrimRows)
+        {
+            return image.Height;
+        }
+
+        return Math.Max(1, image.Height - trailingGrayRows);
+    }
+
+    private static int MillimetersToPixels(int millimeters, int resolution)
+    {
+        return (int)Math.Round(millimeters / 25.4 * resolution, MidpointRounding.AwayFromZero);
+    }
+
     private static Task ConvertToPdfAsync(
         string inputFile,
         string pdfFile,
@@ -212,7 +322,20 @@ public sealed class ScanWorkerService : BackgroundService
         return Task.CompletedTask;
     }
 
-    private static async Task RunProcessAsync(
+    private void LogProcessOutput(string fileName, ProcessResult result)
+    {
+        if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+        {
+            _logger.LogInformation("{FileName} stdout:{NewLine}{Output}", fileName, Environment.NewLine, result.StandardOutput.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.StandardError))
+        {
+            _logger.LogWarning("{FileName} stderr:{NewLine}{Output}", fileName, Environment.NewLine, result.StandardError.Trim());
+        }
+    }
+
+    private static async Task<ProcessResult> RunProcessAsync(
         string fileName,
         IEnumerable<string> arguments,
         CancellationToken cancellationToken,
@@ -238,9 +361,13 @@ public sealed class ScanWorkerService : BackgroundService
         var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
 
         await Task.WhenAll(stdoutTask, stderrTask, process.WaitForExitAsync(cancellationToken));
+        var result = new ProcessResult(process.ExitCode, stdoutTask.Result, stderrTask.Result);
+
         if (process.ExitCode != 0 && allowedExtraCodes?.Contains(process.ExitCode) != true)
         {
-            throw new InvalidOperationException($"{fileName} failed with code {process.ExitCode}: {stderrTask.Result}");
+            throw new InvalidOperationException($"{fileName} failed with code {process.ExitCode}: {result.StandardError}");
         }
+
+        return result;
     }
 }

@@ -15,7 +15,7 @@ It advertises scanner menu entries over SNMP, listens for button presses over UD
 
 1. `SnmpAdvertiseService` sends periodic Brother scan-menu advertisements to the printer.
 2. `UdpListenerService` listens on `54925/udp`, parses `FUNC` + `USER`, echoes ACK, and queues the request.
-3. `ScanWorkerService` runs `brother-scan-cli`, receives page images, converts each page to PDF, merges in temp, then moves the final PDF into output.
+3. `ScanWorkerService` runs `brother-scan-cli`, receives page images, trims trailing uniform gray scan artifacts from the bottom of each page, converts each page to PDF, merges in temp, then moves the final PDF into output.
 
 ADF and flatbed both produce a single output PDF named:
 
