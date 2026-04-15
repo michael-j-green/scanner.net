@@ -6,6 +6,9 @@ using PdfSharpCore.Drawing;
 using PdfSharpCore.Pdf;
 using PdfSharpCore.Pdf.IO;
 using ScannerNet.Models;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 
 namespace ScannerNet.Services;
 
@@ -101,6 +104,7 @@ public sealed class ScanWorkerService : BackgroundService
         var pdfFiles = new List<string>(pageFiles.Count);
         foreach (var pageFile in pageFiles)
         {
+            TrimTrailingGrayBlock(pageFile);
             var pdfFile = Path.ChangeExtension(pageFile, ".pdf");
             await ConvertToPdfAsync(pageFile, pdfFile, cancellationToken);
             pdfFiles.Add(pdfFile);
@@ -176,6 +180,89 @@ public sealed class ScanWorkerService : BackgroundService
         }
 
         return (i < name.Length && int.TryParse(name[i..], out var n)) ? n : 0;
+    }
+
+    private void TrimTrailingGrayBlock(string inputFile)
+    {
+        var extension = Path.GetExtension(inputFile);
+        if (!string.Equals(extension, ".jpg", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(extension, ".jpeg", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(extension, ".bmp", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        using var image = Image.Load<Rgba32>(inputFile);
+        var trimmedHeight = FindTrimmedHeight(image);
+        if (trimmedHeight >= image.Height)
+        {
+            return;
+        }
+
+        image.Mutate(context => context.Crop(new Rectangle(0, 0, image.Width, trimmedHeight)));
+        image.Save(inputFile);
+        _logger.LogInformation(
+            "Trimmed trailing gray rows from {FileName}: {OriginalHeight} -> {TrimmedHeight}",
+            Path.GetFileName(inputFile),
+            image.Height,
+            trimmedHeight);
+    }
+
+    private static int FindTrimmedHeight(Image<Rgba32> image)
+    {
+        const int minTrimRows = 24;
+        const int maxChannelSpread = 18;
+        const int maxLumaSpread = 12;
+        const int minGrayLuma = 40;
+        const int maxGrayLuma = 235;
+
+        var sampleStep = Math.Max(1, image.Width / 256);
+        var trailingGrayRows = 0;
+
+        for (var y = image.Height - 1; y >= 0; y--)
+        {
+            var minLuma = 255;
+            var maxLuma = 0;
+            var minChannel = 255;
+            var maxChannel = 0;
+            long totalLuma = 0;
+            var samples = 0;
+
+            for (var x = 0; x < image.Width; x += sampleStep)
+            {
+                var pixel = image[x, y];
+                var luma = (pixel.R * 299 + pixel.G * 587 + pixel.B * 114) / 1000;
+                totalLuma += luma;
+                samples++;
+
+                minLuma = Math.Min(minLuma, luma);
+                maxLuma = Math.Max(maxLuma, luma);
+
+                minChannel = Math.Min(minChannel, Math.Min(pixel.R, Math.Min(pixel.G, pixel.B)));
+                maxChannel = Math.Max(maxChannel, Math.Max(pixel.R, Math.Max(pixel.G, pixel.B)));
+            }
+
+            var averageLuma = (int)(totalLuma / Math.Max(1, samples));
+            var looksUniformGray = averageLuma >= minGrayLuma
+                && averageLuma <= maxGrayLuma
+                && (maxLuma - minLuma) <= maxLumaSpread
+                && (maxChannel - minChannel) <= maxChannelSpread;
+
+            if (!looksUniformGray)
+            {
+                break;
+            }
+
+            trailingGrayRows++;
+        }
+
+        if (trailingGrayRows < minTrimRows)
+        {
+            return image.Height;
+        }
+
+        return Math.Max(1, image.Height - trailingGrayRows);
     }
 
     private static Task ConvertToPdfAsync(
