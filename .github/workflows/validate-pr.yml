@@ -42,7 +42,30 @@ jobs:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64
+          load: true
+          tags: scanner-net-validate:amd64
           push: false
+
+      - name: Smoke test container startup
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cid=""
+          cleanup() {
+            if [[ -n "$cid" ]]; then
+              docker rm -f "$cid" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          cid="$(docker run -d -e SCANNER_IP=127.0.0.1 scanner-net-validate:amd64)"
+          status="$(docker inspect "$cid" --format '{{.State.Status}}')"
+          if [[ "$status" != "running" ]]; then
+            echo "Container did not stay running (status=$status)."
+            docker logs "$cid" || true
+            exit 1
+          fi
 
       - name: Build arm64 image
         uses: docker/build-push-action@v6

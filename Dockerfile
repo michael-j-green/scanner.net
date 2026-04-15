@@ -37,7 +37,7 @@ WORKDIR /app
 
 RUN apt-get update -q \
     && apt-get install -q -y --no-install-recommends \
-    pdftk ca-certificates \
+    pdftk ca-certificates libicu72 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
